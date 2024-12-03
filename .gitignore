@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 src/de421.bsp
 src/gp.php
+src/assets/satellite_tles.txt

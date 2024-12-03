@@ -4,6 +4,7 @@ import pytz
 import requests
 import os
 
+
 def azimuth_to_direction(azimuth):
     """
     Converts an azimuth angle to a compass direction.
@@ -28,37 +29,58 @@ def azimuth_to_direction(azimuth):
 
 
 class satellite_db:
-    def __init__(self, tle_file_path='assets/satellite_tles.txt'):     
-        
+    def __init__(self, tle_file_path="assets/satellite_tles.txt"):
+
         self.tle_file_path = tle_file_path
-        #open file and remove empty lines
-        with open(self.tle_file_path, 'r') as file:
-            lines = file.readlines()
-            lines = [line for line in lines if line.strip()]
-        with open(self.tle_file_path, 'w') as file:
-            file.writelines(lines)
+        need_to_download_TLE = False
+        # check if file exists in folder already. If not, try to download. If it is, check the date it was downloaded
+        if not os.path.exists(self.tle_file_path):
+            print("File does not exist")
+            need_to_download_TLE = True
+        else:
+            print("TLE file already exists")
+            file_date = os.path.getctime(self.tle_file_path)
+            print(f"File date: {datetime.fromtimestamp(file_date)}")
+            current_date = datetime.now().timestamp()
+            if current_date - file_date > 86400:
+                print("TLE are stale (more than 1 day old). Downloading new file")
+                need_to_download_TLE = True
+            else:
+                print("TLE are fresh (less than 1 day old). Using local copy")
 
-
+        # check if it is needed to download the TLE, and try to download it. If it fails, use the local file and display a warning about using stale data.
         self.satellite_tle_dict = {}
 
-        # Try to download the TLE file and save it locally
+        if need_to_download_TLE:
+            print("Downloading TLE file")
+            try:
+                self._fetch_and_save_tle_file()
+            except Exception as e:
+                print(f"Error fetching TLE file: {e}")
+                print("Using local copy of TLE file, if available (WARNING: Data may be stale)")
+        self._process_tle_file()
+        self.satellites = load.tle_file(tle_file_path)
+        print(f"Loaded {len(self.satellites)} satellites")
+
+        self.eph = load("de421.bsp")
+        self.ts = load.timescale()
+        self.sun = self.eph["sun"]
+
+    def reload_tle(self):
+        self.satellite_tle_dict = {}
+        print("Downloading TLE file")
         try:
             self._fetch_and_save_tle_file()
         except Exception as e:
             print(f"Error fetching TLE file: {e}")
-            # Try to use the local file if downloading failed
-            try:
-                self._load_local_tle_file()
-            except Exception as e:
-                raise Exception("Failed to fetch or load TLE file.")
-            
-        self.satellites = load.tle_file(tle_file_path)
-        self.eph = load("de421.bsp")
-        self.ts = load.timescale()
-        self.sun = self.eph["sun"]
+            print("Using local copy of TLE file, if available (WARNING: Data may be stale)")
+        self._process_tle_file()
+        self.satellites = load.tle_file(self.tle_file_path)
         print(f"Loaded {len(self.satellites)} satellites")
 
-    def generate_azel_data(self, satellite,observer, t0, t1):
+
+
+    def generate_azel_data(self, satellite, observer, t0, t1):
         """
         Generate azimuth and elevation data for a satellite between two times.
 
@@ -73,9 +95,7 @@ class satellite_db:
         # satellite = self.satellites[satellite_name]
         observer = wgs84.latlon(observer[0], observer[1])
         difference = satellite - observer
-        t_start = self.ts.utc(
-            t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second
-        )
+        t_start = self.ts.utc(t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second)
 
         # Calculate the end time (t1) by adding the timeframe in hours directly to the time
         t_stop = self.ts.utc(
@@ -93,14 +113,17 @@ class satellite_db:
             alt, az, distance = topocentric.altaz()
             azel_data.append((t_now.utc_iso(), az.degrees, alt.degrees))
             t_now = t_now.utc_datetime() + timedelta(seconds=10)
-            t_now = self.ts.utc(t_now.year, t_now.month, t_now.day, t_now.hour, t_now.minute, t_now.second)
+            t_now = self.ts.utc(
+                t_now.year,
+                t_now.month,
+                t_now.day,
+                t_now.hour,
+                t_now.minute,
+                t_now.second,
+            )
         # topocentric = difference.at(t)
         # alt, az, distance = topocentric.altaz()
         return azel_data
-
-
-
-
 
     def _fetch_and_save_tle_file(self):
         """
@@ -110,14 +133,14 @@ class satellite_db:
             url = "http://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"
             response = requests.get(url)
             # Save the fetched TLE file locally
-            if(response.text.__contains__("<!DOCTYPE")):
+            if response.text.__contains__("<!DOCTYPE"):
                 raise Exception("Failed to fetch TLE file.")
-            with open(self.tle_file_path, 'w') as f:
+            with open(self.tle_file_path, "w") as f:
                 f.write(response.text)
             print(f"TLE file downloaded and saved to {self.tle_file_path}")
-            self._process_tle_file(response.text)
+            # self._process_tle_file(response.text)
         except Exception as e:
-            print(f"Failed to fetch TLE file: {e}")
+            # print(f"Failed to fetch TLE file: {e}")
             print("Failed to fetch TLE file, using local copy.")
             raise Exception("Failed to fetch TLE file.")
 
@@ -128,28 +151,40 @@ class satellite_db:
         if not os.path.exists(self.tle_file_path):
             raise Exception(f"Local TLE file '{self.tle_file_path}' not found.")
 
-        with open(self.tle_file_path, 'r') as f:
+        with open(self.tle_file_path, "r") as f:
             tle_data = f.read()
         print(f"Loaded TLE file from local file {self.tle_file_path}")
-        self._process_tle_file(tle_data)
+        # self._process_tle_file(tle_data)
 
-    def _process_tle_file(self, tle_data):
+    def _process_tle_file(self):
         """
         Processes the raw TLE data and populates the satellite_tle_dict.
         """
-        tle_data = tle_data.strip().split('\n')
+        # open file and remove empty lines
+        with open(self.tle_file_path, "r") as file:
+            lines = file.readlines()
+            lines = [line for line in lines if line.strip()]
+        with open(self.tle_file_path, "w") as file:
+            file.writelines(lines)
 
-        for i in range(0, len(tle_data)-2, 3):
+        if not os.path.exists(self.tle_file_path):
+            raise Exception(f"Local TLE file '{self.tle_file_path}' not found.")
+
+        with open(self.tle_file_path, "r") as f:
+            tle_data = f.read()
+
+        tle_data = tle_data.strip().split("\n")
+
+        for i in range(0, len(tle_data) - 2, 3):
             name = tle_data[i].strip()  # Satellite name (the first line)
             tle_line_1 = tle_data[i + 1].strip()  # First TLE line (line 1)
             tle_line_2 = tle_data[i + 2].strip()  # Second TLE line (line 2)
-            
+
             # Store TLE lines as a tuple in the dictionary
             tle_string = (tle_line_1, tle_line_2)
-            
+
             # Add the satellite name and TLE string to the dictionary
             self.satellite_tle_dict[name] = tle_string
-        
 
     def get_tle(self, satellite_name):
         """
@@ -162,8 +197,6 @@ class satellite_db:
             str: A string containing the TLE lines, or None if the satellite is not found.
         """
         return self.satellite_tle_dict.get(satellite_name, None)
-
-        print(self.satellite_tle_dict)
 
     def find_visible_satellites(
         self,
@@ -230,6 +263,7 @@ class satellite_db:
                 continue
             else:
                 i = 0
+                #search for a rise event. If we catch a pass in the middle, it is discarded
                 while events[i] != 0:
                     i += 1
                 while i + 2 < len(events - 1):
@@ -250,6 +284,47 @@ class satellite_db:
                         continue
                     _, start_az, _ = difference.at(t_start).altaz()
                     _, end_az, _ = difference.at(t_end).altaz()
+                    sunlit = False
+                    t_sun_start = t_start
+                    t_sun_end = t_end
+                    print("searching for sunlit")
+                    while satellite.at(t_sun_start).is_sunlit(self.eph) != True and t_sun_start.tt < t_end.tt:
+                        t_sun_start = t_sun_start.utc_datetime() + timedelta(seconds=10)
+                        t_sun_start = self.ts.utc(
+                            t_sun_start.year,
+                            t_sun_start.month,
+                            t_sun_start.day,
+                            t_sun_start.hour,
+                            t_sun_start.minute,
+                            t_sun_start.second,
+                        )
+                    
+                    # print(t_sun_start, satellite.at(t_sun_start).is_sunlit(self.eph))
+                    if t_sun_start.tt >= t_end.tt:
+                        continue
+
+                    while satellite.at(t_sun_end).is_sunlit(self.eph) != True and t_sun_end.tt > t_start.tt:
+                        t_sun_end = t_sun_end.utc_datetime() - timedelta(seconds=10)
+                        t_sun_end = self.ts.utc(
+                            t_sun_end.year,
+                            t_sun_end.month,
+                            t_sun_end.day,
+                            t_sun_end.hour,
+                            t_sun_end.minute,
+                            t_sun_end.second,
+                        )
+
+
+                    # print(t_sun_start, satellite.at(t_sun_start).is_sunlit(self.eph))
+                    
+                    if t_sun_end.tt <= t_start.tt:
+                        continue
+                    
+                    duration = (t_sun_end - t_sun_start)*3600*24
+                    # print(duration)
+                    if(duration < min_duration):
+                        continue
+                    sunlit = True
 
                     sunlit = satellite.at(t_peak).is_sunlit(self.eph)
                     # print(sunlit)
@@ -264,6 +339,8 @@ class satellite_db:
                                 azimuth_to_direction(end_az.degrees),
                                 peak_alt.degrees,
                                 duration,
+                                t_sun_start,
+                                t_sun_end
                             ]
                         )
 

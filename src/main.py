@@ -14,9 +14,9 @@ class SatellitePassTrackerApp:
         self.root = root
         self.root.title("Satellite Pass Tracker")
         self.config_data = self.load_config()
+        self.sat_db = satellite_db()
         self.create_widgets()
         self.last_results = []
-        self.sat_db = satellite_db()
 
     def create_widgets(self):
         def add_label_entry(row, label, default_value):
@@ -43,19 +43,31 @@ class SatellitePassTrackerApp:
 
         # Search Button
         ttk.Button(self.root, text="Search for Visible Passes", command=self.on_search).grid(row=9, column=0, columnspan=2, pady=10)
+        ttk.Button(self.root, text="Reload TLE", command=self.sat_db.reload_tle).grid(row=9, column=1, columnspan=2, pady=10)
 
         # Results Frame and Treeview
         self.results_frame = ttk.Frame(self.root)
         self.results_frame.grid(row=10, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
 
-        self.columns = ("#", "Satellite", "Start Time", "Peak Time", "End Time", "Start Azimuth", "End Azimuth", "Peak Altitude", "Duration")
+        self.columns = ("#", "Satellite", "Start Time", "Peak Time", "End Time", "Start Azimuth", "End Azimuth", "Peak Altitude", "Duration", "Sunlit Pass Start", "Sunlit Pass End")
         self.treeview = ttk.Treeview(self.results_frame, columns=self.columns, show="headings", height=10)
         self.treeview.grid(row=0, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(self.results_frame, orient="vertical", command=self.treeview.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.treeview.configure(yscrollcommand=scrollbar.set)
-
+        # Configure column widths
+        self.treeview.column("#", width=5)  # About 3 characters wide
+        self.treeview.column("Satellite", width=120)
+        self.treeview.column("Start Time", width=40)
+        self.treeview.column("Peak Time", width=40)
+        self.treeview.column("End Time", width=40)
+        self.treeview.column("Start Azimuth", width=40)
+        self.treeview.column("End Azimuth", width=40)
+        self.treeview.column("Peak Altitude", width=40)
+        self.treeview.column("Duration", width=25)
+        self.treeview.column("Sunlit Pass Start", width=40)
+        self.treeview.column("Sunlit Pass End", width=40)
         for col in self.columns:
             self.treeview.heading(col, text=col)
 
@@ -68,7 +80,8 @@ class SatellitePassTrackerApp:
         self.treeview.bind("<Button-3>", self.show_context_menu)
 
         # Total Results Label
-        ttk.Label(self.root, text="Total Results: 0").grid(row=11, column=0, columnspan=2, pady=5)
+        self.total_results_label = ttk.Label(self.root, text="Total Results: 0")
+        self.total_results_label.grid(row=11, column=0, columnspan=2, pady=5)
 
         # Resizing Configuration
         self.root.grid_rowconfigure(10, weight=1)
@@ -154,7 +167,9 @@ class SatellitePassTrackerApp:
                 sat[4],
                 sat[5],
                 f"{round(sat[6], 1)}°",
-                f"{round(sat[7] * 24 * 3600)}s",
+                f"{round(sat[7])}s",
+                sat[8].astimezone(local_tz).strftime("%H:%M:%S"),
+                sat[9].astimezone(local_tz).strftime("%H:%M:%S")
             ))
 
         return formatted_results, results
